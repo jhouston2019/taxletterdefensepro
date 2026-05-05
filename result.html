@@ -29,6 +29,32 @@
         }
         .card-body-pre { white-space: pre-wrap; }
         .card h2 { font-size: 1rem; color: #8a9ab5; margin: 0 0 0.75rem; }
+        #analysis.card,
+        #strategy.card,
+        #letter.card {
+            background: #ffffff;
+            color: #1a2332;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 24px;
+        }
+        #analysis h2,
+        #strategy h2,
+        #letter h2 {
+            color: #1a2332;
+        }
+        #analysis .card-body-pre,
+        #strategy .card-body-pre,
+        #letter .card-body-pre {
+            color: #1a2332;
+        }
+        #letter .result-cta {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+        #letter .result-cta-lead {
+            color: #1a2332;
+        }
         #loading { color: #8a9ab5; }
         a { color: #4a9eff; font-weight: 600; }
         .result-pro-disclaimer {
@@ -149,6 +175,17 @@
                       font-weight:600; cursor:pointer; font-size:14px;">
                       ⬇ Download as Word (.doc)
                     </button>
+                    <button type="button" id="downloadPdf" style="
+                      background: rgba(255,255,255,0.08);
+                      color: #e8edf5;
+                      border: 1px solid rgba(255,255,255,0.2);
+                      padding: 12px 24px;
+                      border-radius: 8px;
+                      font-weight: 600;
+                      cursor: pointer;
+                      font-size: 14px;">
+                      ⬇ Download as PDF
+                    </button>
                 </div>
                 <div id="letterLockedWrap" style="display:none;">
                     <div class="result-letter-preview-wrap">
@@ -162,7 +199,7 @@
                     </div>
                 </div>
                 <div id="letterPendingWrap" style="display:none;">
-                    <p style="color:#8a9ab5;margin:0;">Your letter is still being finalized. Refresh in a moment.</p>
+                    <p style="color:#1a2332;margin:0;">Your letter is still being finalized. Refresh in a moment.</p>
                 </div>
             </div>
             <p class="result-pro-disclaimer">Have questions about your response? Consider consulting a licensed tax professional or CPA.</p>
@@ -255,8 +292,45 @@
             URL.revokeObjectURL(url);
         }
 
+        function downloadPdf() {
+            const text = document.getElementById('letterBodyFull').textContent;
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(`
+      <html>
+        <head>
+          <title>IRS Response Letter</title>
+          <style>
+            body {
+              font-family: 'Times New Roman', serif;
+              font-size: 12pt;
+              line-height: 1.8;
+              margin: 1in;
+              color: #000;
+            }
+            pre {
+              white-space: pre-wrap;
+              font-family: 'Times New Roman', serif;
+              font-size: 12pt;
+            }
+          </style>
+        </head>
+        <body>
+          <pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() { window.close(); };
+            };
+          <\/script>
+        </body>
+      </html>
+    `);
+            printWindow.document.close();
+        }
+
         document.getElementById('downloadTxtBtn').addEventListener('click', downloadTxt);
         document.getElementById('downloadWordBtn').addEventListener('click', downloadWord);
+        document.getElementById('downloadPdf').addEventListener('click', downloadPdf);
 
         function applyUnlockedLetter(data) {
             document.getElementById('analysisBody').textContent = analysisTextFromData(data) || '—';
