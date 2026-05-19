@@ -44,6 +44,17 @@ const mainHandler = async (event) => {
         customerEmail,
       });
 
+      if (!stripeSession.metadata?.job_id) {
+        console.warn(
+          "Stripe webhook: payment received with no job_id in metadata. Pricing page direct-buy path may still be active."
+        );
+        return {
+          statusCode: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ received: true }),
+        };
+      }
+
       if (jobId) {
         const updatePayload = {
           paid: true,
@@ -64,8 +75,6 @@ const mainHandler = async (event) => {
         } else {
           console.log("Webhook: successfully unlocked job", jobId);
         }
-      } else {
-        console.log("Webhook: catalog checkout, no job_id", stripeSessionId);
       }
 
       return {
