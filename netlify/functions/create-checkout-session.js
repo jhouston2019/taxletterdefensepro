@@ -34,59 +34,59 @@ const mainHandler = async (event) => {
     };
   }
 
-  let body = {};
   try {
-    body = JSON.parse(event.body || "{}");
-  } catch {
-    body = {};
-  }
-
-  const rawAuth = event.headers?.authorization || event.headers?.Authorization || "";
-  const token = rawAuth.replace(/^Bearer\s+/i, "").trim();
-  let userId = null;
-  if (token) {
-    const { data: authData } = await supabaseAdmin.auth.getUser(token);
-    if (authData?.user?.id) {
-      userId = authData.user.id;
+    let body = {};
+    try {
+      body = JSON.parse(event.body || "{}");
+    } catch {
+      body = {};
     }
-  }
 
-  const jobIdRaw = (body?.job_id || body?.jobId || "").trim();
-  const jobId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobIdRaw)
-    ? jobIdRaw
-    : "";
+    const rawAuth = event.headers?.authorization || event.headers?.Authorization || "";
+    const token = rawAuth.replace(/^Bearer\s+/i, "").trim();
+    let userId = null;
+    if (token) {
+      const { data: authData } = await supabaseAdmin.auth.getUser(token);
+      if (authData?.user?.id) {
+        userId = authData.user.id;
+      }
+    }
 
-  const priceId = (process.env.STRIPE_PRICE_RESPONSE || "").trim();
+    const jobIdRaw = (body?.job_id || body?.jobId || "").trim();
+    const jobId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobIdRaw)
+      ? jobIdRaw
+      : "";
 
-  if (!process.env.SITE_URL) {
-    return {
-      statusCode: 500,
-      headers: corsHeaders,
-      body: JSON.stringify({
-        error: "SITE_URL is not configured",
-        details:
-          "Set SITE_URL in Netlify (e.g. https://taxletterdefensepro.com)",
-      }),
-    };
-  }
-  if (!process.env.STRIPE_SECRET_KEY) {
-    return {
-      statusCode: 500,
-      headers: corsHeaders,
-      body: JSON.stringify({ error: "Stripe is not configured" }),
-    };
-  }
-  if (!jobId && !priceId) {
-    return {
-      statusCode: 500,
-      headers: corsHeaders,
-      body: JSON.stringify({
-        error: "STRIPE_PRICE_RESPONSE is required for catalog checkout",
-      }),
-    };
-  }
+    const priceId = (process.env.STRIPE_PRICE_RESPONSE || "").trim();
 
-  try {
+    if (!process.env.SITE_URL) {
+      return {
+        statusCode: 500,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "SITE_URL is not configured",
+          details:
+            "Set SITE_URL in Netlify (e.g. https://taxletterdefensepro.com)",
+        }),
+      };
+    }
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return {
+        statusCode: 500,
+        headers: corsHeaders,
+        body: JSON.stringify({ error: "Stripe is not configured" }),
+      };
+    }
+    if (!jobId && !priceId) {
+      return {
+        statusCode: 500,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "STRIPE_PRICE_RESPONSE is required for catalog checkout",
+        }),
+      };
+    }
+
     if (jobId) {
       const { data: job, error: jobErr } = await supabaseAdmin
         .from("tax_letter_jobs")
@@ -146,9 +146,11 @@ const mainHandler = async (event) => {
       sessionParams.customer_email = customerEmail;
     }
 
-    console.log("CHECKOUT PRICE ID:", priceId);
+    console.log("STRIPE SECRET KEY PREFIX:", process.env.STRIPE_SECRET_KEY?.slice(0, 8));
+    console.log("STRIPE PRICE RESPONSE:", process.env.STRIPE_PRICE_RESPONSE);
     console.log("JOB ID:", jobId);
     console.log("LINE ITEMS:", JSON.stringify(lineItems, null, 2));
+    console.log("SESSION PARAMS line_items:", JSON.stringify(sessionParams.line_items, null, 2));
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 
@@ -168,15 +170,17 @@ const mainHandler = async (event) => {
         stripe_secret_key_mode: keyIsTest ? "test" : "live",
       }),
     };
-  } catch (error) {
-    trackError(error, { functionName: "create-checkout-session" });
-    const details = clientErrorMessage(error);
+  } catch (err) {
+    console.error("CHECKOUT SESSION ERROR:", err);
+    console.error("CHECKOUT SESSION ERROR MESSAGE:", err?.message);
+    console.error("CHECKOUT SESSION ERROR STACK:", err?.stack);
+    trackError(err, { functionName: "create-checkout-session" });
     return {
       statusCode: 500,
       headers: corsHeaders,
       body: JSON.stringify({
-        error: "Failed to create checkout session",
-        details,
+        error: err.message,
+        stack: err.stack,
       }),
     };
   }
