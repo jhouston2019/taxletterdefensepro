@@ -977,7 +977,7 @@ async function startCheckout(ev) {
     if (data.url) {
       window.location.href = data.url;
     } else {
-      throw new Error(data.error || data.details || 'No checkout URL');
+      throw new Error(data.error || data.message || data.details || 'No checkout URL');
     }
   } catch (e) {
     if (errEl) errEl.textContent = e.message || 'Payment setup failed.';

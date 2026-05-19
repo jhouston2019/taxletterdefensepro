@@ -172,6 +172,32 @@ const mainHandler = async (event) => {
     console.log("LINE ITEMS:", JSON.stringify(lineItems, null, 2));
     console.log("FINAL SESSION PARAMS:", JSON.stringify(sessionParams, null, 2));
 
+    let stripePrice;
+    try {
+      stripePrice = await stripe.prices.retrieve(priceId);
+    } catch (priceErr) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: priceErr.message || "Invalid STRIPE_PRICE_RESPONSE",
+          code: priceErr.code || null,
+        }),
+      };
+    }
+
+    const unitAmount = stripePrice.unit_amount;
+    if (unitAmount != null && unitAmount < 50) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: `Stripe price ${priceId} is $${(unitAmount / 100).toFixed(2)}. Checkout requires at least $0.50. Update STRIPE_PRICE_RESPONSE in Netlify to your live product price (e.g. $29).`,
+          code: "amount_too_small",
+        }),
+      };
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: lineItems,
@@ -202,15 +228,13 @@ const mainHandler = async (event) => {
   } catch (err) {
     console.error(err);
     trackError(err, { functionName: "create-checkout-session" });
+    const statusCode = err.statusCode && err.statusCode >= 400 && err.statusCode < 500 ? err.statusCode : 500;
     return {
-      statusCode: 500,
+      statusCode,
       headers: corsHeaders,
       body: JSON.stringify({
-        message: err.message,
-        type: err.type,
-        code: err.code,
-        raw: err.raw || null,
-        stack: err.stack,
+        error: err.message || "Checkout session failed",
+        code: err.code || null,
       }),
     };
   }
