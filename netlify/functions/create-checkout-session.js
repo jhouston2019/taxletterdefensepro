@@ -111,10 +111,22 @@ const mainHandler = async (event) => {
     }
 
     if (!priceId) {
-      throw new Error("Missing STRIPE_PRICE_RESPONSE");
+      console.error("Missing STRIPE_PRICE_RESPONSE");
+      return {
+        statusCode: 500,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "Stripe price configuration missing",
+        }),
+      };
     }
 
-    const lineItems = [{ price: priceId, quantity: 1 }];
+    const lineItems = [
+      {
+        price: priceId,
+        quantity: 1,
+      },
+    ];
 
     const siteUrl = (process.env.SITE_URL || "https://yourdomain.com").replace(/\/$/, "");
     const cancelUrl = jobId ? `${siteUrl}/preview/${jobId}` : `${siteUrl}/pricing`;
@@ -172,15 +184,14 @@ const mainHandler = async (event) => {
     };
   } catch (err) {
     console.error("CHECKOUT SESSION ERROR:", err);
-    console.error("CHECKOUT SESSION ERROR MESSAGE:", err?.message);
-    console.error("CHECKOUT SESSION ERROR STACK:", err?.stack);
     trackError(err, { functionName: "create-checkout-session" });
     return {
       statusCode: 500,
       headers: corsHeaders,
       body: JSON.stringify({
-        error: err.message,
-        stack: err.stack,
+        error: err?.message || "Checkout session failed",
+        type: err?.type || null,
+        code: err?.code || null,
       }),
     };
   }
