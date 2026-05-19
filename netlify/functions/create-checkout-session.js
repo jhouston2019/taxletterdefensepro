@@ -87,6 +87,7 @@ const mainHandler = async (event) => {
       };
     }
 
+    let jobRecord = null;
     if (jobId) {
       const { data: job, error: jobErr } = await supabaseAdmin
         .from("tax_letter_jobs")
@@ -101,7 +102,10 @@ const mainHandler = async (event) => {
           body: JSON.stringify({ error: "Job not found" }),
         };
       }
-      if (job.user_id != null && String(job.user_id) !== String(userId || "")) {
+      jobRecord = job;
+      // Block only when caller is authenticated as a different user than the job owner.
+      // Guest wizard checkout has no token; job may still have user_id from analyze step.
+      if (job.user_id != null && userId != null && String(job.user_id) !== String(userId)) {
         return {
           statusCode: 403,
           headers: corsHeaders,
@@ -149,7 +153,9 @@ const mainHandler = async (event) => {
       metadata: {
         plan_type: body?.plan || "single",
         ...(jobId && { job_id: jobId }),
-        ...(userId && { user_id: String(userId) }),
+        ...((userId || jobRecord?.user_id) && {
+          user_id: String(userId || jobRecord.user_id),
+        }),
       },
       success_url: `${siteUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: cancelUrl,
