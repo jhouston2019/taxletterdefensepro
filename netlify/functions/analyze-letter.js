@@ -69,6 +69,50 @@ async function paidStripeSessionGrantsSkipPayment(userId, usageSessionId) {
   }
 }
 
+async function findAuthUserIdByEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return null;
+
+  let page = 1;
+  const perPage = 200;
+  while (page <= 10) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const match = (data?.users || []).find(
+      (u) => String(u.email || "").trim().toLowerCase() === normalized
+    );
+    if (match?.id) return match.id;
+    if (!data?.users?.length || data.users.length < perPage) break;
+    page += 1;
+  }
+  return null;
+}
+
+async function resolveJobUserId({ userId, userEmail }) {
+  if (userId) return userId;
+
+  const email = String(userEmail || "").trim();
+  if (!email) return null;
+
+  const existingId = await findAuthUserIdByEmail(email);
+  if (existingId) return existingId;
+
+  const { data, error } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    email_confirm: true,
+    user_metadata: { source: "wizard_guest_analyze" },
+  });
+
+  if (data?.user?.id) return data.user.id;
+
+  if (error && /already|exists|registered|duplicate/i.test(String(error.message || ""))) {
+    return findAuthUserIdByEmail(email);
+  }
+
+  if (error) throw error;
+  return null;
+}
+
 function sanitizeForPostgresText(value) {
   if (typeof value !== "string") return value;
   return value.replace(/\u0000/g, "");
@@ -88,6 +132,7 @@ function sanitizeJsonValue(value) {
 }
 
 function isRetriableInsertError(error) {
+  if (error?.code === "23502") return false;
   const msg = String(error?.message || error?.details || error?.hint || "");
   return /column|schema cache|does not exist|row-level security|42703|PGRST204/i.test(msg);
 }
@@ -331,6 +376,14 @@ const mainHandler = async (event) => {
     ).trim();
     const requestedJobId = isValidUUID.test(jobIdFromBody) ? jobIdFromBody : null;
 
+    const jobUserId = await resolveJobUserId({ userId, userEmail });
+    console.log("[analyze-letter] job user", {
+      guestAnalyze,
+      authUserId: userId || null,
+      jobUserId: jobUserId || null,
+      userEmail: userEmail || null,
+    });
+
     let recordId = null;
     if (getSupabaseAdmin) {
       try {
@@ -368,7 +421,7 @@ const mainHandler = async (event) => {
 
         if (!updatedExisting) {
           recordId = await insertTaxLetterJob(supabase, {
-            user_id: guestAnalyze ? null : userId,
+            user_id: jobUserId,
             email: userEmail || null,
             analysis_json: storedAnalysisJson,
             strategy_json: safeStrategyJson,
