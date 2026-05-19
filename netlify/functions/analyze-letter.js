@@ -69,117 +69,30 @@ async function paidStripeSessionGrantsSkipPayment(userId, usageSessionId) {
   }
 }
 
-async function findAuthUserIdByEmail(email) {
+/** Production DB requires user_id NOT NULL; guest wizard supplies email on step 2. */
+async function resolveJobUserId(userId, email) {
+  if (userId) return userId;
   const normalized = String(email || "").trim().toLowerCase();
   if (!normalized) return null;
 
-  let page = 1;
-  const perPage = 200;
-  while (page <= 10) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+  const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
+    email: normalized,
+    email_confirm: true,
+    user_metadata: { source: "wizard_analyze" },
+  });
+  if (created?.user?.id) return created.user.id;
+
+  if (createError && /already|exists|registered|duplicate/i.test(String(createError.message || ""))) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (error) throw error;
-    const match = (data?.users || []).find(
+    const existing = (data?.users || []).find(
       (u) => String(u.email || "").trim().toLowerCase() === normalized
     );
-    if (match?.id) return match.id;
-    if (!data?.users?.length || data.users.length < perPage) break;
-    page += 1;
+    if (existing?.id) return existing.id;
   }
+
+  if (createError) throw createError;
   return null;
-}
-
-async function resolveJobUserId({ userId, userEmail }) {
-  if (userId) return userId;
-
-  const email = String(userEmail || "").trim();
-  if (!email) return null;
-
-  const existingId = await findAuthUserIdByEmail(email);
-  if (existingId) return existingId;
-
-  const { data, error } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    user_metadata: { source: "wizard_guest_analyze" },
-  });
-
-  if (data?.user?.id) return data.user.id;
-
-  if (error && /already|exists|registered|duplicate/i.test(String(error.message || ""))) {
-    return findAuthUserIdByEmail(email);
-  }
-
-  if (error) throw error;
-  return null;
-}
-
-function sanitizeForPostgresText(value) {
-  if (typeof value !== "string") return value;
-  return value.replace(/\u0000/g, "");
-}
-
-function sanitizeJsonValue(value) {
-  if (value == null) return value;
-  try {
-    return JSON.parse(
-      JSON.stringify(value, (_, v) =>
-        typeof v === "string" ? sanitizeForPostgresText(v) : v
-      )
-    );
-  } catch {
-    return value;
-  }
-}
-
-function isRetriableInsertError(error) {
-  if (error?.code === "23502") return false;
-  const msg = String(error?.message || error?.details || error?.hint || "");
-  return /column|schema cache|does not exist|row-level security|42703|PGRST204/i.test(msg);
-}
-
-async function insertTaxLetterJob(supabase, fullRow) {
-  const withoutExtended = { ...fullRow };
-  delete withoutExtended.strategy_json;
-  delete withoutExtended.wizard_json;
-  delete withoutExtended.hard_stop;
-
-  const minimalRow = {
-    user_id: fullRow.user_id ?? null,
-    email: fullRow.email ?? null,
-    analysis_json: fullRow.analysis_json,
-    inputs_json: fullRow.inputs_json ?? null,
-    letter_full: fullRow.letter_full,
-    preview_text: fullRow.preview_text,
-    paid: fullRow.paid ?? false,
-    is_unlocked: fullRow.is_unlocked ?? false,
-  };
-
-  let lastError = null;
-  for (const attemptRow of [fullRow, withoutExtended, minimalRow]) {
-    const { data, error } = await supabase
-      .from("tax_letter_jobs")
-      .insert(attemptRow)
-      .select("id, created_at")
-      .single();
-
-    if (!error) {
-      return data.id;
-    }
-
-    lastError = error;
-    console.error("[analyze-letter] insert attempt failed:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    });
-
-    if (!isRetriableInsertError(error)) {
-      throw error;
-    }
-  }
-
-  throw lastError || new Error("All insert attempts failed");
 }
 
 function buildAnalysisJsonFromIntelligence(letterText, analysisResult) {
@@ -263,7 +176,7 @@ const mainHandler = async (event) => {
         (await paidStripeSessionGrantsSkipPayment(userId, usageSessionId));
     }
 
-    let letterText = sanitizeForPostgresText(text || "");
+    let letterText = String(text || "").replace(/\u0000/g, "");
 
     if (fileUrl) {
       try {
@@ -360,14 +273,10 @@ const mainHandler = async (event) => {
       wizardJson,
     });
 
-    const safeLetterFull = sanitizeForPostgresText(letterFull);
-    const safePreviewText = sanitizeForPostgresText(previewText);
-    const storedAnalysisJson = sanitizeJsonValue({
+    const storedAnalysisJson = {
       ...analysisJson,
       analysisOutput: analysisResult.analysisOutput || analysisJson.analysisOutput,
-    });
-    const safeStrategyJson = sanitizeJsonValue(strategyJson);
-    const safeWizardJson = sanitizeJsonValue(wizardJson);
+    };
 
     const isValidUUID =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -376,13 +285,8 @@ const mainHandler = async (event) => {
     ).trim();
     const requestedJobId = isValidUUID.test(jobIdFromBody) ? jobIdFromBody : null;
 
-    const jobUserId = await resolveJobUserId({ userId, userEmail });
-    console.log("[analyze-letter] job user", {
-      guestAnalyze,
-      authUserId: userId || null,
-      jobUserId: jobUserId || null,
-      userEmail: userEmail || null,
-    });
+    const jobEmail = userEmail || bodyWizard?.email || null;
+    const jobUserId = await resolveJobUserId(userId, jobEmail);
 
     let recordId = null;
     if (getSupabaseAdmin) {
@@ -403,11 +307,11 @@ const mainHandler = async (event) => {
             const { error: updateError } = await supabaseAdmin
               .from("tax_letter_jobs")
               .update({
-                letter_full: safeLetterFull,
-                preview_text: safePreviewText,
+                letter_full: letterFull,
+                preview_text: previewText,
                 analysis_json: storedAnalysisJson,
-                strategy_json: safeStrategyJson,
-                wizard_json: safeWizardJson,
+                strategy_json: strategyJson,
+                wizard_json: wizardJson,
                 hard_stop: hardStop,
               })
               .eq("id", requestedJobId);
@@ -420,12 +324,12 @@ const mainHandler = async (event) => {
         }
 
         if (!updatedExisting) {
-          recordId = await insertTaxLetterJob(supabase, {
+          const row = {
             user_id: jobUserId,
-            email: userEmail || null,
+            email: jobEmail || null,
             analysis_json: storedAnalysisJson,
-            strategy_json: safeStrategyJson,
-            wizard_json: safeWizardJson,
+            strategy_json: strategyJson,
+            wizard_json: wizardJson,
             inputs_json: {
               source: "analyze-letter",
               guest: guestAnalyze,
@@ -433,12 +337,37 @@ const mainHandler = async (event) => {
               has_image_url: !!imageUrl,
               text_length: letterText.length,
             },
-            letter_full: safeLetterFull,
-            preview_text: safePreviewText,
+            letter_full: letterFull,
+            preview_text: previewText,
             paid: !!skip_payment,
             is_unlocked: !!skip_payment,
             hard_stop: hardStop,
-          });
+          };
+
+          let { data: insertData, error: insertError } = await supabase
+            .from("tax_letter_jobs")
+            .insert(row)
+            .select("id, created_at")
+            .single();
+
+          if (
+            insertError &&
+            /strategy_json|wizard_json|hard_stop|column/i.test(
+              String(insertError.message || insertError.details || "")
+            )
+          ) {
+            delete row.strategy_json;
+            delete row.wizard_json;
+            delete row.hard_stop;
+            ({ data: insertData, error: insertError } = await supabase
+              .from("tax_letter_jobs")
+              .insert(row)
+              .select("id, created_at")
+              .single());
+          }
+
+          if (insertError) throw insertError;
+          recordId = insertData.id;
           console.log("Record saved:", recordId);
         }
       } catch (dbError) {
@@ -450,11 +379,7 @@ const mainHandler = async (event) => {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
           },
-          body: JSON.stringify({
-            error: "Could not save your session. Please try again.",
-            details: dbError.message || String(dbError),
-            code: dbError.code || null,
-          }),
+          body: JSON.stringify({ error: "Could not save your session. Please try again." }),
         };
       }
     } else {
@@ -484,7 +409,7 @@ const mainHandler = async (event) => {
         job_id: recordId,
         recordId,
         redirect_url: redirectUrl,
-        preview_excerpt: safePreviewText,
+        preview_excerpt: previewText,
         hard_stop: hardStop,
         guest_analyze: guestAnalyze,
         skip_payment: !!skip_payment,
