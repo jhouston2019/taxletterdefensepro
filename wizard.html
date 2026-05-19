@@ -618,14 +618,19 @@ async function extractPdfText(file) {
   return t;
 }
 
+function isPdfUpload() {
+  const mime = (state.fileType || '').toLowerCase();
+  const name = (state.fileName || '').toLowerCase();
+  return mime.includes('pdf') || name.endsWith('.pdf');
+}
+
 async function ensureNoticeTextForApi() {
   let text = state.noticeText.trim();
-  if (state.inputMode === 'upload' && state.rawFile) {
-    const mime = (state.fileType || '').toLowerCase();
-    if (mime.includes('pdf')) {
-      if (!state.pdfExtractedText) {
-        state.pdfExtractedText = await extractPdfText(state.rawFile);
-      }
+  if (state.inputMode === 'upload' && isPdfUpload()) {
+    if (!state.pdfExtractedText && state.rawFile) {
+      state.pdfExtractedText = await extractPdfText(state.rawFile);
+    }
+    if (state.pdfExtractedText) {
       text = state.pdfExtractedText;
     }
   }
@@ -675,7 +680,7 @@ async function buildAnalyzeBody(includeStrategy) {
     const mime = (state.fileType || '').toLowerCase();
     if (mime.includes('image')) {
       body.imageUrl = state.fileData;
-    } else if (!mime.includes('pdf')) {
+    } else if (!isPdfUpload()) {
       body.fileUrl = state.fileData;
     }
   }
@@ -861,7 +866,7 @@ window.__wizOnFile = async (input) => {
   state.fileType = file.type || 'application/octet-stream';
   state.fileData = await readFileAsDataURL(file);
   state.pdfExtractedText = '';
-  if ((state.fileType || '').toLowerCase().includes('pdf')) {
+  if (isPdfUpload()) {
     try {
       state.pdfExtractedText = await extractPdfText(file);
     } catch (err) {
