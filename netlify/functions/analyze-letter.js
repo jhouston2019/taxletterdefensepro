@@ -9,6 +9,7 @@ try {
 
 const { createClient } = require("@supabase/supabase-js");
 const Stripe = require("stripe");
+const { randomUUID } = require("crypto");
 
 const { wrapHandler, trackError } = require("./_error-tracking.js");
 const { getSupabaseAdmin } = require("./_supabase.js");
@@ -69,29 +70,38 @@ async function paidStripeSessionGrantsSkipPayment(userId, usageSessionId) {
   }
 }
 
-/** Production DB requires user_id NOT NULL; guest wizard supplies email on step 2. */
+/** Production DB requires user_id NOT NULL; guests may omit email on step 2. */
 async function resolveJobUserId(userId, email) {
   if (userId) return userId;
+
   const normalized = String(email || "").trim().toLowerCase();
-  if (!normalized) return null;
+  if (normalized) {
+    const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
+      email: normalized,
+      email_confirm: true,
+      user_metadata: { source: "wizard_analyze" },
+    });
+    if (created?.user?.id) return created.user.id;
 
-  const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
-    email: normalized,
-    email_confirm: true,
-    user_metadata: { source: "wizard_analyze" },
-  });
-  if (created?.user?.id) return created.user.id;
+    if (createError && /already|exists|registered|duplicate/i.test(String(createError.message || ""))) {
+      const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (error) throw error;
+      const existing = (data?.users || []).find(
+        (u) => String(u.email || "").trim().toLowerCase() === normalized
+      );
+      if (existing?.id) return existing.id;
+    }
 
-  if (createError && /already|exists|registered|duplicate/i.test(String(createError.message || ""))) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (error) throw error;
-    const existing = (data?.users || []).find(
-      (u) => String(u.email || "").trim().toLowerCase() === normalized
-    );
-    if (existing?.id) return existing.id;
+    if (createError) throw createError;
   }
 
-  if (createError) throw createError;
+  const { data: guest, error: guestError } = await supabaseAdmin.auth.admin.createUser({
+    email: `guest+${randomUUID()}@guest.taxletterdefensepro.com`,
+    email_confirm: true,
+    user_metadata: { source: "wizard_guest_analyze", guest: true },
+  });
+  if (guest?.user?.id) return guest.user.id;
+  if (guestError) throw guestError;
   return null;
 }
 
