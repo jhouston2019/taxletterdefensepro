@@ -705,7 +705,10 @@ async function postAnalyzeLetter(includeStrategy) {
   const raw = await res.text();
   let data;
   try { data = JSON.parse(raw); } catch { data = { error: raw || 'Invalid response' }; }
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  if (!res.ok) {
+    const msg = data.details ? `${data.error || 'Request failed'}: ${data.details}` : (data.error || 'Request failed');
+    throw new Error(msg);
+  }
   return data;
 }
 

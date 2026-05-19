@@ -69,6 +69,74 @@ async function paidStripeSessionGrantsSkipPayment(userId, usageSessionId) {
   }
 }
 
+function sanitizeForPostgresText(value) {
+  if (typeof value !== "string") return value;
+  return value.replace(/\u0000/g, "");
+}
+
+function sanitizeJsonValue(value) {
+  if (value == null) return value;
+  try {
+    return JSON.parse(
+      JSON.stringify(value, (_, v) =>
+        typeof v === "string" ? sanitizeForPostgresText(v) : v
+      )
+    );
+  } catch {
+    return value;
+  }
+}
+
+function isRetriableInsertError(error) {
+  const msg = String(error?.message || error?.details || error?.hint || "");
+  return /column|schema cache|does not exist|row-level security|42703|PGRST204/i.test(msg);
+}
+
+async function insertTaxLetterJob(supabase, fullRow) {
+  const withoutExtended = { ...fullRow };
+  delete withoutExtended.strategy_json;
+  delete withoutExtended.wizard_json;
+  delete withoutExtended.hard_stop;
+
+  const minimalRow = {
+    user_id: fullRow.user_id ?? null,
+    email: fullRow.email ?? null,
+    analysis_json: fullRow.analysis_json,
+    inputs_json: fullRow.inputs_json ?? null,
+    letter_full: fullRow.letter_full,
+    preview_text: fullRow.preview_text,
+    paid: fullRow.paid ?? false,
+    is_unlocked: fullRow.is_unlocked ?? false,
+  };
+
+  let lastError = null;
+  for (const attemptRow of [fullRow, withoutExtended, minimalRow]) {
+    const { data, error } = await supabase
+      .from("tax_letter_jobs")
+      .insert(attemptRow)
+      .select("id, created_at")
+      .single();
+
+    if (!error) {
+      return data.id;
+    }
+
+    lastError = error;
+    console.error("[analyze-letter] insert attempt failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    if (!isRetriableInsertError(error)) {
+      throw error;
+    }
+  }
+
+  throw lastError || new Error("All insert attempts failed");
+}
+
 function buildAnalysisJsonFromIntelligence(letterText, analysisResult) {
   const c = analysisResult.classification || {};
   const fin = analysisResult.financialInfo || {};
@@ -150,7 +218,7 @@ const mainHandler = async (event) => {
         (await paidStripeSessionGrantsSkipPayment(userId, usageSessionId));
     }
 
-    let letterText = text || "";
+    let letterText = sanitizeForPostgresText(text || "");
 
     if (fileUrl) {
       try {
@@ -247,10 +315,14 @@ const mainHandler = async (event) => {
       wizardJson,
     });
 
-    const storedAnalysisJson = {
+    const safeLetterFull = sanitizeForPostgresText(letterFull);
+    const safePreviewText = sanitizeForPostgresText(previewText);
+    const storedAnalysisJson = sanitizeJsonValue({
       ...analysisJson,
       analysisOutput: analysisResult.analysisOutput || analysisJson.analysisOutput,
-    };
+    });
+    const safeStrategyJson = sanitizeJsonValue(strategyJson);
+    const safeWizardJson = sanitizeJsonValue(wizardJson);
 
     const isValidUUID =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -278,11 +350,11 @@ const mainHandler = async (event) => {
             const { error: updateError } = await supabaseAdmin
               .from("tax_letter_jobs")
               .update({
-                letter_full: letterFull,
-                preview_text: previewText,
+                letter_full: safeLetterFull,
+                preview_text: safePreviewText,
                 analysis_json: storedAnalysisJson,
-                strategy_json: strategyJson,
-                wizard_json: wizardJson,
+                strategy_json: safeStrategyJson,
+                wizard_json: safeWizardJson,
                 hard_stop: hardStop,
               })
               .eq("id", requestedJobId);
@@ -295,12 +367,12 @@ const mainHandler = async (event) => {
         }
 
         if (!updatedExisting) {
-          const row = {
+          recordId = await insertTaxLetterJob(supabase, {
             user_id: guestAnalyze ? null : userId,
             email: userEmail || null,
             analysis_json: storedAnalysisJson,
-            strategy_json: strategyJson,
-            wizard_json: wizardJson,
+            strategy_json: safeStrategyJson,
+            wizard_json: safeWizardJson,
             inputs_json: {
               source: "analyze-letter",
               guest: guestAnalyze,
@@ -308,37 +380,12 @@ const mainHandler = async (event) => {
               has_image_url: !!imageUrl,
               text_length: letterText.length,
             },
-            letter_full: letterFull,
-            preview_text: previewText,
+            letter_full: safeLetterFull,
+            preview_text: safePreviewText,
             paid: !!skip_payment,
             is_unlocked: !!skip_payment,
             hard_stop: hardStop,
-          };
-
-          let { data: insertData, error: insertError } = await supabase
-            .from("tax_letter_jobs")
-            .insert(row)
-            .select("id, created_at")
-            .single();
-
-          if (
-            insertError &&
-            /strategy_json|wizard_json|hard_stop|column/i.test(
-              String(insertError.message || insertError.details || "")
-            )
-          ) {
-            delete row.strategy_json;
-            delete row.wizard_json;
-            delete row.hard_stop;
-            ({ data: insertData, error: insertError } = await supabase
-              .from("tax_letter_jobs")
-              .insert(row)
-              .select("id, created_at")
-              .single());
-          }
-
-          if (insertError) throw insertError;
-          recordId = insertData.id;
+          });
           console.log("Record saved:", recordId);
         }
       } catch (dbError) {
@@ -350,7 +397,11 @@ const mainHandler = async (event) => {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
           },
-          body: JSON.stringify({ error: "Could not save your session. Please try again." }),
+          body: JSON.stringify({
+            error: "Could not save your session. Please try again.",
+            details: dbError.message || String(dbError),
+            code: dbError.code || null,
+          }),
         };
       }
     } else {
@@ -380,7 +431,7 @@ const mainHandler = async (event) => {
         job_id: recordId,
         recordId,
         redirect_url: redirectUrl,
-        preview_excerpt: previewText,
+        preview_excerpt: safePreviewText,
         hard_stop: hardStop,
         guest_analyze: guestAnalyze,
         skip_payment: !!skip_payment,
