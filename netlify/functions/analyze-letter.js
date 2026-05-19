@@ -108,8 +108,6 @@ async function resolveJobUserId(userId, email) {
 function buildAnalysisJsonFromIntelligence(letterText, analysisResult) {
   const c = analysisResult.classification || {};
   const fin = analysisResult.financialInfo || {};
-  const help = analysisResult.professionalHelpAssessment || {};
-  const meta = analysisResult.metadata || {};
 
   const noticeType = c.noticeType || "IRS Notice";
   const primary =
@@ -126,7 +124,6 @@ function buildAnalysisJsonFromIntelligence(letterText, analysisResult) {
     summary: summaryLine,
     analysis_summary: summaryLine,
     analysisOutput: analysisResult.analysisOutput || null,
-    requires_professional_help: !!(help.recommendProfessional || meta.requiresProfessionalHelp),
     intelligence: {
       classification: c,
       financialInfo: fin,
@@ -270,12 +267,6 @@ const mainHandler = async (event) => {
 
     const wizardJson = bodyWizard || (userInfo ? mapUserInfoToWizard(userInfo) : {});
 
-    const hardStop = !!(
-      analysisJson.requires_professional_help ||
-      analysisResult.professionalHelpAssessment?.recommendProfessional ||
-      analysisResult.metadata?.requiresProfessionalHelp
-    );
-
     const { letterFull, previewText } = await generateFullJob({
       noticeText: letterText,
       analysisJson,
@@ -322,7 +313,6 @@ const mainHandler = async (event) => {
                 analysis_json: storedAnalysisJson,
                 strategy_json: strategyJson,
                 wizard_json: wizardJson,
-                hard_stop: hardStop,
               })
               .eq("id", requestedJobId);
 
@@ -351,7 +341,6 @@ const mainHandler = async (event) => {
             preview_text: previewText,
             paid: !!skip_payment,
             is_unlocked: !!skip_payment,
-            hard_stop: hardStop,
           };
 
           let { data: insertData, error: insertError } = await supabase
@@ -362,13 +351,12 @@ const mainHandler = async (event) => {
 
           if (
             insertError &&
-            /strategy_json|wizard_json|hard_stop|column/i.test(
+            /strategy_json|wizard_json|column/i.test(
               String(insertError.message || insertError.details || "")
             )
           ) {
             delete row.strategy_json;
             delete row.wizard_json;
-            delete row.hard_stop;
             ({ data: insertData, error: insertError } = await supabase
               .from("tax_letter_jobs")
               .insert(row)
@@ -420,7 +408,6 @@ const mainHandler = async (event) => {
         recordId,
         redirect_url: redirectUrl,
         preview_excerpt: previewText,
-        hard_stop: hardStop,
         guest_analyze: guestAnalyze,
         skip_payment: !!skip_payment,
       }),

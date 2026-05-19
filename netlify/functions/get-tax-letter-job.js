@@ -32,7 +32,7 @@ exports.handler = async (event) => {
     .from("tax_letter_jobs")
     .select(
       "id, created_at, user_id, analysis_json, strategy_json, wizard_json, " +
-        "letter_full, preview_text, paid, is_unlocked, hard_stop, stripe_session_id"
+        "letter_full, preview_text, paid, is_unlocked, stripe_session_id"
     )
     .eq("id", jobId)
     .single();
@@ -67,7 +67,6 @@ exports.handler = async (event) => {
   const responseBody = {
     success: true,
     job_id: job.id,
-    hard_stop: job.hard_stop || false,
     analysis_summary: analysisSummary,
     analysis_full: analysisFull,
     analysis_json: job.analysis_json,
