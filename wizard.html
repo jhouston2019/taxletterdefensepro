@@ -21,15 +21,59 @@
       line-height: 1.5;
     }
 
-    /* Progress bar */
-    .progress-wrap {
+    /* Top header: brand + back to home + progress */
+    .wizard-header-sticky {
       position: sticky;
       top: 0;
       z-index: 100;
       background: rgba(10, 20, 40, 0.95);
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      padding: 16px 20px;
       backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .wizard-nav-bar {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 12px 20px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+    }
+    .wizard-nav-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .wizard-back {
+      flex-shrink: 0;
+      color: #8a9ab5;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .wizard-back:hover { color: #4a9eff; }
+    .wizard-back:focus-visible {
+      outline: 2px solid #4a9eff;
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    .wizard-brand {
+      font-size: 15px;
+      font-weight: 700;
+      color: #4a9eff;
+      letter-spacing: -0.01em;
+    }
+    @media (max-width: 480px) {
+      .wizard-back .wizard-back-label { display: none; }
+    }
+
+    /* Progress bar */
+    .progress-wrap {
+      padding: 4px 20px 16px;
     }
     .progress-inner {
       max-width: 720px;
@@ -93,15 +137,6 @@
         width: 10px; height: 10px; font-size: 0;
         background: #22c55e; border-color: #22c55e;
       }
-    }
-
-    .page-title {
-      max-width: 720px;
-      margin: 0 auto;
-      padding: 20px 24px 0;
-      font-size: 14px;
-      color: #4a9eff;
-      font-weight: 700;
     }
 
     .wizard-card {
@@ -418,10 +453,20 @@
 </head>
 <body>
 
-<div class="progress-wrap">
-  <div class="progress-inner" id="progressBar"></div>
+<div class="wizard-header-sticky">
+  <nav class="wizard-nav-bar" aria-label="Site">
+    <div class="wizard-nav-left">
+      <a href="/" class="wizard-back" aria-label="Back to home page">
+        <span aria-hidden="true">←</span>
+        <span class="wizard-back-label">Home</span>
+      </a>
+      <span class="wizard-brand">Tax Letter Defense Pro</span>
+    </div>
+  </nav>
+  <div class="progress-wrap">
+    <div class="progress-inner" id="progressBar"></div>
+  </div>
 </div>
-<div class="page-title">Tax Letter Defense Pro</div>
 
 <div class="wizard-card" id="wizardRoot">
   <!-- Steps injected by JS -->

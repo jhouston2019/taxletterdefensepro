@@ -110,21 +110,11 @@ const mainHandler = async (event) => {
       }
     }
 
-    const lineItems = jobId
-      ? [
-          {
-            price_data: {
-              currency: "usd",
-              unit_amount: 2900,
-              product_data: {
-                name: "IRS Response Letter — Tax Letter Defense Pro",
-                description: "Complete professionally drafted IRS response letter",
-              },
-            },
-            quantity: 1,
-          },
-        ]
-      : [{ price: priceId, quantity: 1 }];
+    if (!priceId) {
+      throw new Error("Missing STRIPE_PRICE_RESPONSE");
+    }
+
+    const lineItems = [{ price: priceId, quantity: 1 }];
 
     const siteUrl = (process.env.SITE_URL || "https://yourdomain.com").replace(/\/$/, "");
     const cancelUrl = jobId ? `${siteUrl}/preview/${jobId}` : `${siteUrl}/pricing`;
@@ -155,6 +145,10 @@ const mainHandler = async (event) => {
     if (customerEmail) {
       sessionParams.customer_email = customerEmail;
     }
+
+    console.log("CHECKOUT PRICE ID:", priceId);
+    console.log("JOB ID:", jobId);
+    console.log("LINE ITEMS:", JSON.stringify(lineItems, null, 2));
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 
