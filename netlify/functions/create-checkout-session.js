@@ -160,11 +160,22 @@ const mainHandler = async (event) => {
 
     console.log("STRIPE SECRET KEY PREFIX:", process.env.STRIPE_SECRET_KEY?.slice(0, 8));
     console.log("STRIPE PRICE RESPONSE:", process.env.STRIPE_PRICE_RESPONSE);
+    console.log("PRICE ID TYPE:", typeof priceId);
+    console.log("PRICE ID VALUE:", JSON.stringify(priceId));
     console.log("JOB ID:", jobId);
     console.log("LINE ITEMS:", JSON.stringify(lineItems, null, 2));
-    console.log("SESSION PARAMS line_items:", JSON.stringify(sessionParams.line_items, null, 2));
+    console.log("FINAL SESSION PARAMS:", JSON.stringify(sessionParams, null, 2));
 
-    const session = await stripe.checkout.sessions.create(sessionParams);
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: lineItems,
+      payment_method_types: sessionParams.payment_method_types,
+      customer_creation: sessionParams.customer_creation,
+      metadata: sessionParams.metadata,
+      success_url: sessionParams.success_url,
+      cancel_url: sessionParams.cancel_url,
+      ...(sessionParams.customer_email && { customer_email: sessionParams.customer_email }),
+    });
 
     const keyIsTest = String(process.env.STRIPE_SECRET_KEY || "").startsWith("sk_test_");
     console.log("[create-checkout-session]", {
@@ -183,15 +194,17 @@ const mainHandler = async (event) => {
       }),
     };
   } catch (err) {
-    console.error("CHECKOUT SESSION ERROR:", err);
+    console.error(err);
     trackError(err, { functionName: "create-checkout-session" });
     return {
       statusCode: 500,
       headers: corsHeaders,
       body: JSON.stringify({
-        error: err?.message || "Checkout session failed",
-        type: err?.type || null,
-        code: err?.code || null,
+        message: err.message,
+        type: err.type,
+        code: err.code,
+        raw: err.raw || null,
+        stack: err.stack,
       }),
     };
   }
